@@ -126,7 +126,16 @@
   const b64dec = (s) => { const bin = atob(s.replace(/\s/g, '')); return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))); };
   const err = (code, msg) => Object.assign(new Error(msg), { code });
 
-  async function get(path) {
+  // Leitura sem token: raw.githubusercontent.com (sem limite da API; cache de ~1-5 min).
+  async function getRaw(path) {
+    const r = await fetch(`https://raw.githubusercontent.com/${CFG.owner}/${CFG.repo}/${encodeURIComponent(CFG.branch)}/${path}?_=${Math.floor(Date.now() / 60000)}`, { cache: 'no-store' });
+    if (r.status === 404) return { text: '', sha: null };
+    if (!r.ok) throw err('HTTP', 'Erro ao ler os dados (' + r.status + ').');
+    return { text: await r.text(), sha: null };
+  }
+
+  async function get(path, forWrite) {
+    if (isGH && !forWrite && !getToken()) return getRaw(path);
     if (!isGH) {
       let t = null; try { t = localStorage.getItem('sicksbet.csv.' + path); } catch (e) { /* ignore */ }
       return { text: t || '', sha: null };
@@ -136,7 +145,7 @@
     const r = await fetch(`https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/${path}?ref=${encodeURIComponent(CFG.branch)}&_=${Date.now()}`, { headers: h, cache: 'no-store' });
     if (r.status === 404) return { text: '', sha: null };
     if (r.status === 401) throw err('BAD_TOKEN', 'Chave de acesso inválida.');
-    if (r.status === 403 || r.status === 429) throw err('RATE', 'Limite do GitHub atingido. Tente de novo em alguns minutos (ou informe a chave de acesso).');
+    if (r.status === 403 || r.status === 429) { if (!forWrite) return getRaw(path); throw err('RATE', 'Limite do GitHub atingido. Tente de novo em alguns minutos.'); }
     if (!r.ok) throw err('HTTP', 'Erro ao ler os dados (' + r.status + ').');
     const j = await r.json();
     return { text: b64dec(j.content || ''), sha: j.sha };
@@ -169,7 +178,8 @@
   async function mutate(name, fn, msg) {
     const f = FILES[name];
     for (let a = 0; a < 4; a++) {
-      const { text, sha } = await get(f.path);
+      if (isGH && !getToken()) throw err('NO_TOKEN', 'Informe a chave de acesso para gravar.');
+      const { text, sha } = await get(f.path, true);
       let rows = text ? toObjects(text, f.cols) : clone(SEED[name]);
       rows = fn(rows) || rows;
       try { await put(f.path, toCSV(rows, f.cols), sha, msg || 'SicksBET: atualiza ' + name); return rows; }
