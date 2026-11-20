@@ -2,10 +2,9 @@
 (() => {
   'use strict';
   const { $, esc, toast, mult, score, diffMin, current, toMin } = AB;
-  const PIN_KEY = 'sicksbet.admin';
 
   let D = { rodadas: [], apostas: [], emprestimos: [] };
-  let ok = false; try { ok = sessionStorage.getItem(PIN_KEY) === '1'; } catch (e) { /* ignore */ }
+  let ok = !!AB.getPin();
   let loaded = false, error = '';
   const cur = () => current(D.rodadas);
 
@@ -14,13 +13,10 @@
     loaded = true; render();
   }
 
-  // Aplica uma alteração na rodada atual e grava rodadas.csv.
-  async function patchRound(changes, okMsg) {
-    const id = cur().rodada;
-    try {
-      await AB.mutate('rodadas', (rows) => { const r = rows.find((x) => x.rodada === id); if (r) Object.assign(r, changes); return rows; }, `Rodada ${id}: ${Object.keys(changes).join(', ')}`);
-      toast(okMsg || 'Salvo!');
-    } catch (e) { AB.handleErr(e, () => patchRound(changes, okMsg)); }
+  // Executa uma ação de admin no servidor e recarrega os dados.
+  async function run(action, payload, okMsg) {
+    try { await AB.act(action, payload); toast(okMsg || 'Salvo!'); }
+    catch (e) { AB.handleErr(e); if (e.code === 'PIN') { ok = false; render(); return; } }
     await load(true);
   }
 
@@ -47,7 +43,8 @@
     }
     if (!loaded) return '<p class="empty">Carregando…</p>';
     const r = cur();
-    const where = AB.isGH ? `GitHub: <b>${esc(AB.CFG.owner)}/${esc(AB.CFG.repo)}</b> (${esc(AB.CFG.branch)})` : 'Modo local (teste): dados só neste navegador';
+    const where = AB.useApi ? 'Os dados ficam nos CSVs do GitHub (o servidor grava por você).' : 'Modo local (teste): dados só neste navegador. PIN local: 1234.';
+    const repo = AB.CFG.repoUrl;
     const n = D.apostas.filter((a) => a.rodada === r.rodada).length;
     const st = { aberta: 'Apostas abertas', fechada: 'Apostas fechadas', encerrada: 'Rodada encerrada' }[r.status] || r.status;
     return `
@@ -90,12 +87,9 @@
           </section>
           <section class="card"><div class="card__t">🔑 Dados e acesso</div>
             <p class="meta">${where}</p>
-            ${AB.isGH ? `<form class="form" id="tokenForm2"><label class="f" for="tk">Chave de acesso (token do GitHub)</label>
-              <input class="inp" id="tk" type="password" autocomplete="off" placeholder="${AB.getToken() ? '•••••• salva neste aparelho' : 'github_pat_...'}">
-              <div class="btnrow"><button class="btn btn--ghost btn--sm" type="submit">Salvar chave</button><button class="btn btn--ghost btn--sm" type="button" id="clearTk">Remover</button></div></form>` : ''}
             <div class="btnrow" style="margin-top:12px"><button class="btn btn--ghost btn--sm" id="refresh">🔄 Atualizar</button>
-              <a class="btn btn--ghost btn--sm" href="data/apostas.csv" target="_blank" rel="noopener">apostas.csv</a>
-              <a class="btn btn--ghost btn--sm" href="data/rodadas.csv" target="_blank" rel="noopener">rodadas.csv</a></div>
+              ${AB.useApi && repo ? `<a class="btn btn--ghost btn--sm" href="${esc(repo)}/blob/main/data/apostas.csv" target="_blank" rel="noopener">apostas.csv</a>
+              <a class="btn btn--ghost btn--sm" href="${esc(repo)}/blob/main/data/rodadas.csv" target="_blank" rel="noopener">rodadas.csv</a>` : ''}</div>
           </section>
         </div>
       </div>`;
@@ -108,41 +102,30 @@
 
   document.addEventListener('click', async (e) => {
     const t = e.target.closest('button'); if (!t) return;
-    if (t.id === 'toggle') return patchRound({ status: cur().status === 'aberta' ? 'fechada' : 'aberta' }, 'Status atualizado.');
+    if (t.id === 'toggle') return run('status', { status: cur().status === 'aberta' ? 'fechada' : 'aberta' }, 'Status atualizado.');
     if (t.id === 'refresh') return load();
-    if (t.id === 'clearTk') { AB.setToken(''); toast('Chave removida.'); return render(); }
-    if (t.id === 'newRound') {
-      const r = cur(), id = String(Number(r.rodada) + 1);
-      try {
-        await AB.mutate('rodadas', (rows) => { rows.push({ rodada: id, amigo: r.amigo, combinado: r.combinado, status: 'aberta', veio: '', chegada: '' }); return rows; }, 'Nova rodada ' + id);
-        toast('Rodada #' + id + ' aberta!');
-      } catch (er) { AB.handleErr(er); }
-      await load(true);
-    }
+    if (t.id === 'newRound') return run('nova', {}, 'Nova rodada aberta!');
   });
 
   document.addEventListener('input', (e) => { if (e.target.id === 'rCame' || e.target.id === 'rTime') $('#prev').innerHTML = preview(); });
   document.addEventListener('change', (e) => { if (e.target.id === 'rCame') $('#prev').innerHTML = preview(); });
 
-  document.addEventListener('submit', (e) => {
+  document.addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = e.target.id;
     if (id === 'pinForm') {
-      if ($('#pin').value === String(AB.CFG.adminPin)) { ok = true; try { sessionStorage.setItem(PIN_KEY, '1'); } catch (x) { /* ignore */ } load(); }
-      else toast('PIN incorreto.', true);
+      try { await AB.adminLogin($('#pin').value); ok = true; load(); }
+      catch (er) { AB.handleErr(er); }
     } else if (id === 'cfgForm') {
       const n = $('#cName').value.trim().replace(/[,"]/g, ''), t = $('#cTime').value;
       if (!n || toMin(t) === null) return toast('Preencha nome e horário.', true);
-      patchRound({ amigo: n, combinado: t }, 'Configuração salva.');
+      run('config', { amigo: n, combinado: t }, 'Configuração salva.');
     } else if (id === 'resForm') {
       const came = $('#rCame').value === 'sim', time = $('#rTime').value;
       if (came && toMin(time) === null) return toast('Informe o horário de chegada.', true);
       if (confirm(came ? `Confirmar chegada às ${time} e pontuar todo mundo?` : 'Confirmar que ele NÃO veio e pontuar todo mundo?')) {
-        patchRound({ status: 'encerrada', veio: came ? 'sim' : 'nao', chegada: came ? time : '' }, 'Pontuação calculada! 💰');
+        run('resultado', { veio: came ? 'sim' : 'nao', chegada: came ? time : '' }, 'Pontuação calculada! 💰');
       }
-    } else if (id === 'tokenForm2') {
-      const v = $('#tk').value.trim(); if (!v) return;
-      AB.setToken(v); toast('Chave salva neste aparelho.'); render();
     }
   });
 

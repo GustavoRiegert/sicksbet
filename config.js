@@ -1,9 +1,7 @@
-// Configuração do SicksBET.
-// Deixe owner/repo vazios para testar localmente (dados ficam só no seu navegador).
-// Para usar os CSVs do GitHub, preencha com o seu usuário e o nome do repositório.
+// Configuração pública do SicksBET (não coloque segredos aqui).
+// api: true  -> grava pelo servidor (/api), que guarda o token do GitHub em segredo.
+// Em localhost o site usa um modo local de teste automaticamente.
 window.CFG = {
-  owner: 'GustavoRiegert',        // seu usuário do GitHub
-  repo: 'sicksbet',        // nome do repositório
-  branch: 'main',
-  adminPin: '1234',   // trava simples da página admin (não é segurança de verdade)
+  api: true,
+  repoUrl: 'https://github.com/GustavoRiegert/sicksbet',
 };

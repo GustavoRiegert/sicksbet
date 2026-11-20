@@ -39,15 +39,9 @@
     if (stake > disponivel(r)) return toast('Você não tem pontos suficientes.', true);
     ui.busy = true; render();
     try {
-      const fresh = (await AB.read('rodadas')).find((x) => x.rodada === r.rodada);
-      if (!fresh || fresh.status !== 'aberta') { toast('As apostas já foram encerradas!', true); return; }
-      await AB.mutate('apostas', (rows) => {
-        rows = rows.filter((x) => !(x.rodada === r.rodada && same(x.usuario, me)));
-        rows.push({ rodada: r.rodada, usuario: me, palpite: ui.pick, horario: ui.pick === 'sim' ? ui.time : '', valor: String(stake), criado_em: new Date().toISOString() });
-        return rows;
-      }, `Palpite de ${me} na rodada ${r.rodada}`);
+      await AB.act('palpite', { usuario: me, palpite: ui.pick, horario: ui.pick === 'sim' ? ui.time : '', valor: stake });
       toast('Palpite cravado! 🍀');
-    } catch (e) { AB.handleErr(e, submit); }
+    } catch (e) { AB.handleErr(e); }
     finally { ui.busy = false; await load(true); }
   }
 
@@ -64,9 +58,9 @@
     }
     ui.busy = true; render();
     try {
-      await AB.mutate('emprestimos', (rows) => { rows.push({ id: String(Date.now()), usuario: me, tipo, valor: String(valor), criado_em: new Date().toISOString() }); return rows; }, `${tipo === 'pegou' ? 'Empréstimo' : 'Pagamento'} de ${me}`);
+      await AB.act('emprestimo', { usuario: me, tipo });
       toast(tipo === 'pegou' ? `+${valor} pontos emprestados. Você deve ${Math.round(valor * (1 + LOAN.juros))}.` : `Você pagou ${valor} da dívida.`);
-    } catch (e) { AB.handleErr(e, () => loanAction(tipo)); }
+    } catch (e) { AB.handleErr(e); }
     finally { ui.busy = false; await load(true); }
   }
 
